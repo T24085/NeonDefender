@@ -102,8 +102,13 @@ random.seed()
 # sprite helper
 def load_sprite(path: str, diameter: int, color: Tuple[int, int, int]) -> Surface:
     try:
-        return pygame.image.load(path).convert_alpha()
+        # Scale any loaded image down to the requested diameter so oversized
+        # assets don't appear huge in game.  The function previously returned
+        # the raw image which ignored the desired size.
+        image = pygame.image.load(path).convert_alpha()
+        return pygame.transform.smoothscale(image, (diameter, diameter))
     except Exception:
+        # If the image can't be loaded, fall back to a simple colored circle
         surf = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
         pygame.draw.circle(surf, color, (diameter // 2, diameter // 2), diameter // 2)
         return surf
