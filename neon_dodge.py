@@ -189,11 +189,20 @@ class Player:
             pygame.draw.circle(surf, BLUE, self.pos, int(r), width=2)
 
 
+class EnemyType(Enum):
+    NORMAL = auto()
+    ZIGZAG = auto()
+    HOMING = auto()
+    BOSS = auto()
+    MEGA_BOSS = auto()
+
+
 @dataclass
 class Enemy:
     pos: V2
     vel: V2
     speed: float
+    type: EnemyType = EnemyType.NORMAL
     radius: int = ENEMY_RADIUS
     hp: int = 1
     is_boss: bool = False
@@ -201,6 +210,7 @@ class Enemy:
     dash_cd: float = 0.0
     shoot_cd: float = 0.0
     boss_kind: int = 0
+    zigzag_phase: float = 0.0
 
     def update(self, dt: float, player_pos: V2) -> None:
         to_player = (player_pos - self.pos)
@@ -222,10 +232,13 @@ class Enemy:
                     self.vel += to_player.normalize() * self.speed * (1.5 + 0.5 * self.tier)
                 self.dash_cd = random.uniform(1.5, 3.0)
 
-    def draw(self, surf: Surface, enemy_img: Surface, boss_img: Surface) -> None:
-        img = boss_img if self.is_boss else enemy_img
-        rect = img.get_rect(center=self.pos)
-        surf.blit(img, rect)
+    def draw(self, surf: Surface, sprites: dict) -> None:
+        img = sprites.get(self.type)
+        if img is not None:
+            rect = img.get_rect(center=self.pos)
+            surf.blit(img, rect)
+        else:
+            pygame.draw.circle(surf, NEON_PINK, self.pos, self.radius)
         if self.is_boss:
             pygame.draw.circle(surf, WHITE, self.pos, self.radius + 6, width=2)
 
@@ -248,6 +261,7 @@ class Bullet:
     pierce: int = 0
     dmg: int = BULLET_BASE_DMG
     from_enemy: bool = False
+    homing: bool = False
     def update(self, dt: float) -> None:
         self.pos += self.vel * dt
         self.lifetime -= dt
@@ -370,8 +384,13 @@ class Game:
 
         # Sprites
         self.player_img = load_sprite("player.png", PLAYER_RADIUS * 2, NEON_CYAN)
-        self.enemy_img = load_sprite("es1.png", ENEMY_RADIUS * 2, NEON_PINK)
-        self.boss_img = load_sprite("bs1.png", 68, ORANGE)
+        self.enemy_sprites = {
+            EnemyType.NORMAL: load_sprite("es1.png", ENEMY_RADIUS * 2, NEON_PINK),
+            EnemyType.ZIGZAG: load_sprite("es2.png", ENEMY_RADIUS * 2, NEON_YELLOW),
+            EnemyType.HOMING: load_sprite("es3.png", ENEMY_RADIUS * 2, NEON_GREEN),
+            EnemyType.BOSS: load_sprite("bs1.png", 68, ORANGE),
+            EnemyType.MEGA_BOSS: load_sprite("bigboss.png", 96, RED),
+        }
         self.bullet_img = load_sprite("bullet.png", BULLET_RADIUS * 2, NEON_GREEN)
 
         self.high_score = 0
@@ -455,20 +474,64 @@ class Game:
         speed *= 1.0 + 0.15 * tier
         hp = 1 + tier
         dash = random.uniform(1.5, 3.0) if tier >= 1 else 0.0
-        shoot = random.uniform(2.0, 3.5) if tier >= 2 else 0.0
-        return Enemy(pos=pos, vel=vel * speed, speed=speed, hp=hp, tier=tier, dash_cd=dash, shoot_cd=shoot)
+
+        etype = random.choice([EnemyType.NORMAL, EnemyType.ZIGZAG, EnemyType.HOMING])
+        shoot = 0.0
+        zig = 0.0
+        if etype == EnemyType.ZIGZAG:
+            speed *= 1.1
+            zig = random.uniform(0, math.tau)
+        elif etype == EnemyType.HOMING:
+            shoot = random.uniform(2.5, 4.0)
+            speed *= 0.9
+        elif tier >= 2:
+            shoot = random.uniform(2.0, 3.5)
+
+        return Enemy(
+            pos=pos,
+            vel=vel * speed,
+            speed=speed,
+            hp=hp,
+            tier=tier,
+            dash_cd=dash,
+            shoot_cd=shoot,
+            type=etype,
+            zigzag_phase=zig,
+        )
 
     def _spawn_boss(self) -> Enemy:
         pos = V2(random.uniform(120, WIDTH - 120), -40)
-        speed = max(90.0, self.enemy_speed * 0.9)
-        # scale HP with time played
-        hp = 24 + int(self.t // 20) * 6
-        boss_kind = random.choice([0, 1])
-        tier = 2 if boss_kind == 1 else 1
-        dash = random.uniform(1.5, 3.0)
-        shoot = random.uniform(1.0, 2.0) if boss_kind == 1 else 0.0
-        return Enemy(pos=pos, vel=V2(0, speed), speed=speed, radius=34, hp=hp, is_boss=True,
-                     tier=tier, dash_cd=dash, shoot_cd=shoot, boss_kind=boss_kind)
+        boss_kind = random.choice([0, 1, 2])
+        if boss_kind == 2:
+            speed = max(80.0, self.enemy_speed * 0.8)
+            hp = 60 + int(self.t // 20) * 10
+            tier = 3
+            dash = 0.0
+            shoot = random.uniform(1.5, 2.5)
+            radius = 56
+            etype = EnemyType.MEGA_BOSS
+        else:
+            speed = max(90.0, self.enemy_speed * 0.9)
+            hp = 24 + int(self.t // 20) * 6
+            tier = 2 if boss_kind == 1 else 1
+            dash = random.uniform(1.5, 3.0)
+            shoot = random.uniform(1.0, 2.0) if boss_kind == 1 else 0.0
+            radius = 34
+            etype = EnemyType.BOSS
+
+        return Enemy(
+            pos=pos,
+            vel=V2(0, speed),
+            speed=speed,
+            radius=radius,
+            hp=hp,
+            is_boss=True,
+            tier=tier,
+            dash_cd=dash,
+            shoot_cd=shoot,
+            boss_kind=boss_kind,
+            type=etype,
+        )
 
     def _spawn_orb(self) -> Orb:
         return Orb(V2(random.uniform(40, WIDTH - 40), random.uniform(40, HEIGHT - 40)))
@@ -577,6 +640,11 @@ class Game:
 
         # Bullets
         for b in self.bullets:
+            if b.from_enemy and b.homing:
+                to = self.player.pos - b.pos
+                if to.length_squared() > 0:
+                    desired = to.normalize() * ENEMY_BULLET_SPEED
+                    b.vel += (desired - b.vel) * clamp(4.0 * dt, 0.0, 1.0)
             b.update(dt)
         new_bullets: List[Bullet] = []
         for b in self.bullets:
@@ -632,14 +700,47 @@ class Game:
         # Enemies
         for e in self.enemies:
             e.update(dt, self.player.pos)
-            if (e.tier >= 2) or (e.is_boss and e.boss_kind == 1):
+            if e.type == EnemyType.ZIGZAG:
+                e.zigzag_phase += dt * 4.0
+                perp = V2(-e.vel.y, e.vel.x)
+                if perp.length_squared() > 0:
+                    perp = perp.normalize()
+                    e.pos += perp * math.sin(e.zigzag_phase) * e.speed * 0.5 * dt
+            elif e.type == EnemyType.HOMING:
                 e.shoot_cd -= dt
                 if e.shoot_cd <= 0:
                     to = self.player.pos - e.pos
                     dir = to.normalize() if to.length_squared() > 0 else V2(0, 1)
-                    dmg = 2 if e.is_boss else 1
-                    self.bullets.append(Bullet(e.pos + dir * (e.radius + 4), dir * ENEMY_BULLET_SPEED, dmg=dmg, from_enemy=True))
-                    e.shoot_cd = random.uniform(1.0, 2.0) if e.is_boss else random.uniform(1.5, 3.0)
+                    self.bullets.append(
+                        Bullet(
+                            e.pos + dir * (e.radius + 4),
+                            dir * ENEMY_BULLET_SPEED * 0.8,
+                            dmg=1,
+                            from_enemy=True,
+                            homing=True,
+                        )
+                    )
+                    e.shoot_cd = random.uniform(2.0, 3.0)
+            elif e.type == EnemyType.MEGA_BOSS:
+                e.shoot_cd -= dt
+                if e.shoot_cd <= 0:
+                    for i in range(8):
+                        ang = i * (math.tau / 8)
+                        vel = V2(math.cos(ang), math.sin(ang)) * ENEMY_BULLET_SPEED * 0.6
+                        self.bullets.append(Bullet(e.pos, vel, dmg=2, from_enemy=True))
+                    to = self.player.pos - e.pos
+                    dir = to.normalize() if to.length_squared() > 0 else V2(0, 1)
+                    self.bullets.append(Bullet(e.pos, dir * ENEMY_BULLET_SPEED * 0.8, dmg=2, from_enemy=True, homing=True))
+                    e.shoot_cd = random.uniform(1.5, 2.5)
+            else:
+                if (e.tier >= 2) or (e.is_boss and e.boss_kind == 1):
+                    e.shoot_cd -= dt
+                    if e.shoot_cd <= 0:
+                        to = self.player.pos - e.pos
+                        dir = to.normalize() if to.length_squared() > 0 else V2(0, 1)
+                        dmg = 2 if e.is_boss else 1
+                        self.bullets.append(Bullet(e.pos + dir * (e.radius + 4), dir * ENEMY_BULLET_SPEED, dmg=dmg, from_enemy=True))
+                        e.shoot_cd = random.uniform(1.0, 2.0) if e.is_boss else random.uniform(1.5, 3.0)
 
         # Spawn logic
         self.spawn_timer -= dt
@@ -854,7 +955,7 @@ class Game:
         for pu in self.powerups:
             pu.draw(temp)
         for e in self.enemies:
-            e.draw(temp, self.enemy_img, self.boss_img)
+            e.draw(temp, self.enemy_sprites)
         for p in self.particles:
             p.draw(temp)
         for b in self.bullets:
