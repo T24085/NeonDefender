@@ -90,6 +90,8 @@ POWERUP_SPAWN_MAX = 16.0
 POWERUP_DURATION = 10.0
 
 LIVES_START = 3
+BAR_WIDTH = 180
+BAR_HEIGHT = 16
 
 # Coins
 COINS_NORMAL_MIN, COINS_NORMAL_MAX = 1, 3
@@ -686,11 +688,23 @@ class Game:
         self.screen.blit(hi_s, (14, 38))
         self.screen.blit(coins_s, (14, 66))
         self.screen.blit(kills_s, (14, 94))
-        # Lives
-        for i in range(self.lives):
-            x = WIDTH - 20 - i * 24
-            pygame.draw.circle(self.screen, RED, (x, 26), 8)
-            pygame.draw.circle(self.screen, WHITE, (x, 26), 8, 2)
+
+        # Health bar
+        hp_label = self.font_small.render("HP", True, WHITE)
+        self.screen.blit(hp_label, (14, 112))
+        bar_x, bar_y = 14, 126
+        ratio = self.lives / LIVES_START
+        pygame.draw.rect(self.screen, NEON_GREEN, (bar_x, bar_y, int(BAR_WIDTH * ratio), BAR_HEIGHT))
+        pygame.draw.rect(self.screen, WHITE, (bar_x, bar_y, BAR_WIDTH, BAR_HEIGHT), 2)
+
+        # Shield bar
+        shield_label = self.font_small.render("Shield", True, WHITE)
+        sy = bar_y + BAR_HEIGHT + 8
+        self.screen.blit(shield_label, (14, sy - 14))
+        shield_ratio = clamp(self.player.shield_time / POWERUP_DURATION, 0.0, 1.0)
+        pygame.draw.rect(self.screen, BLUE, (bar_x, sy, int(BAR_WIDTH * shield_ratio), BAR_HEIGHT))
+        pygame.draw.rect(self.screen, WHITE, (bar_x, sy, BAR_WIDTH, BAR_HEIGHT), 2)
+
         # Power-up badges
         badges = []
         if self.rapid_time > 0: badges.append(("Rapid", self.rapid_time))
