@@ -124,6 +124,14 @@ def load_sprite(path: str, diameter: int, color: Tuple[int, int, int]) -> Surfac
         pygame.draw.circle(surf, color, (diameter // 2, diameter // 2), diameter // 2)
         return surf
 
+
+def load_sound(path: str) -> Optional[pygame.mixer.Sound]:
+    """Attempt to load a sound and return None if the file is missing."""
+    try:
+        return pygame.mixer.Sound(path)
+    except Exception:
+        return None
+
 # ---------------------------- Utility Helpers ------------------------------ #
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -377,7 +385,6 @@ class Game:
     def __init__(self):
         pygame.init()
         # Initialize mixer for sound effects and music
-        import pygame.mixer
         pygame.mixer.init()
         pygame.display.set_caption(TITLE)
         self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
@@ -403,6 +410,7 @@ class Game:
             EnemyType.MEGA_BOSS: load_sprite("bigboss.png", 96, RED),
         }
         self.bullet_img = load_sprite("bullet.png", BULLET_RADIUS * 2, NEON_GREEN)
+        self.snd_shoot = load_sound("shoot.wav")
 
         self.high_score = 0
         self._load_save()
