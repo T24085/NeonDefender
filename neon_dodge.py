@@ -238,9 +238,46 @@ class Bullet:
         if self.lifetime <= 0:
             return False
         return -20 <= self.pos.x <= WIDTH + 20 and -20 <= self.pos.y <= HEIGHT + 20
+    def draw(
+        self,
+        surf: Surface,
+        player_img: Optional[Surface] = None,
+        enemy_img: Optional[Surface] = None,
+    ) -> None:
+        if self.from_enemy:
+            if enemy_img is not None:
+                surf.blit(enemy_img, enemy_img.get_rect(center=self.pos))
+            else:
+                pygame.draw.circle(surf, RED, self.pos, self.radius)
+        else:
+            if player_img is not None:
+                surf.blit(player_img, player_img.get_rect(center=self.pos))
+            else:
+                pygame.draw.circle(surf, NEON_GREEN, self.pos, self.radius)
+
+
+@dataclass
+class Particle:
+    pos: V2
+    vel: V2
+    color: Tuple[int, int, int]
+    radius: float
+    life: float
+    full_life: float
+
+    def update(self, dt: float) -> None:
+        self.pos += self.vel * dt
+        self.life -= dt
+
+    def alive(self) -> bool:
+        return self.life > 0
+
     def draw(self, surf: Surface) -> None:
-        color = RED if self.from_enemy else NEON_GREEN
-        pygame.draw.circle(surf, color, self.pos, self.radius)
+        if self.life <= 0:
+            return
+        r = int(self.radius * (self.life / self.full_life))
+        if r > 0:
+            pygame.draw.circle(surf, self.color, self.pos, r)
 
 
 class PUType(Enum):
@@ -316,6 +353,7 @@ class Game:
         self.player_img = load_sprite("player.png", PLAYER_RADIUS * 2, NEON_CYAN)
         self.enemy_img = load_sprite("es1.png", ENEMY_RADIUS * 2, NEON_PINK)
         self.boss_img = load_sprite("bs1.png", 68, ORANGE)
+        self.bullet_img = load_sprite("bullet.png", BULLET_RADIUS * 2, NEON_GREEN)
 
         self.high_score = 0
         self._load_save()
@@ -335,6 +373,7 @@ class Game:
 
         # Combat
         self.bullets: List[Bullet] = []
+        self.particles: List[Particle] = []
 
         # Power-ups
         self.powerups: List[PowerUp] = []
@@ -419,6 +458,26 @@ class Game:
         kind = random.choice(list(PUType))
         pos = V2(random.uniform(60, WIDTH - 60), random.uniform(60, HEIGHT - 60))
         self.powerups.append(PowerUp(pos, kind))
+
+    def _spawn_explosion(self, pos: V2) -> None:
+        colors = [
+            (255, 0, 0),
+            (255, 127, 0),
+            (255, 255, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (75, 0, 130),
+            (148, 0, 211),
+        ]
+        for _ in range(20):
+            direction = V2(random.uniform(-1, 1), random.uniform(-1, 1))
+            if direction.length_squared() == 0:
+                direction = V2(1, 0)
+            vel = direction.normalize() * random.uniform(80, 200)
+            life = random.uniform(0.4, 0.8)
+            radius = random.uniform(4, 8)
+            color = random.choice(colors)
+            self.particles.append(Particle(pos.copy(), vel, color, radius, life, life))
 
     # ---------------------- Reset / Start -------------------- #
     def reset(self) -> None:
@@ -527,6 +586,7 @@ class Game:
                     if e.hp <= 0:
                         self.enemies.remove(e)
                         self.kills += 1
+                        self._spawn_explosion(e.pos)
                         if e.is_boss:
                             self.score += BOSS_KILL_SCORE
                             self.coins += random.randint(COINS_BOSS_MIN, COINS_BOSS_MAX)
@@ -543,6 +603,10 @@ class Game:
             if not hit_any:
                 new_bullets.append(b)
         self.bullets = new_bullets
+
+        for p in self.particles:
+            p.update(dt)
+        self.particles = [p for p in self.particles if p.alive()]
 
         # Enemies
         for e in self.enemies:
@@ -763,8 +827,10 @@ class Game:
             pu.draw(temp)
         for e in self.enemies:
             e.draw(temp, self.enemy_img, self.boss_img)
+        for p in self.particles:
+            p.draw(temp)
         for b in self.bullets:
-            b.draw(temp)
+            b.draw(temp, self.bullet_img)
         self.player.draw(temp, self.t, self.player_img)
         self.screen.blit(temp, (ox, oy))
         self.draw_hud()
