@@ -95,6 +95,10 @@ LIVES_START = 3
 BAR_WIDTH = 180
 BAR_HEIGHT = 16
 
+# Difficulty settings
+DIFFICULTIES = ["Easy", "Normal", "Hard"]
+DIFF_SPAWN_MULT = [1.5, 1.0, 0.7]
+
 # Coins
 COINS_NORMAL_MIN, COINS_NORMAL_MAX = 1, 3
 COINS_BOSS_MIN, COINS_BOSS_MAX = 15, 25
@@ -349,6 +353,7 @@ class GameState:
     TITLE = 0
     PLAYING = 1
     GAME_OVER = 2
+    SETTINGS = 3
 
 
 class Game:
@@ -374,8 +379,15 @@ class Game:
         self.boss_img = load_sprite("bs1.png", 68, ORANGE)
         self.bullet_img = load_sprite("bullet.png", BULLET_RADIUS * 2, NEON_GREEN)
 
+        # Settings
+        self.music_volume = 1.0
+        self.sfx_volume = 1.0
+        self.difficulty_idx = 1  # default to Normal
+        self.settings_index = 0
+
         self.high_score = 0
         self._load_save()
+        pygame.mixer.music.set_volume(self.music_volume)
 
         # Gameplay
         self.player = Player(V2(WIDTH / 2, HEIGHT / 2))
@@ -424,14 +436,32 @@ class Game:
             try:
                 data = json.loads(SAVE_PATH.read_text())
                 self.high_score = int(data.get("high_score", 0))
+                self.music_volume = float(data.get("music_volume", 1.0))
+                self.sfx_volume = float(data.get("sfx_volume", 1.0))
+                self.difficulty_idx = int(data.get("difficulty", 1))
             except Exception:
                 self.high_score = 0
+                self.music_volume = 1.0
+                self.sfx_volume = 1.0
+                self.difficulty_idx = 1
         else:
             self.high_score = 0
+            self.music_volume = 1.0
+            self.sfx_volume = 1.0
+            self.difficulty_idx = 1
 
     def _save(self) -> None:
         try:
-            SAVE_PATH.write_text(json.dumps({"high_score": self.high_score}))
+            SAVE_PATH.write_text(
+                json.dumps(
+                    {
+                        "high_score": self.high_score,
+                        "music_volume": self.music_volume,
+                        "sfx_volume": self.sfx_volume,
+                        "difficulty": self.difficulty_idx,
+                    }
+                )
+            )
         except Exception:
             pass
 
@@ -523,6 +553,32 @@ class Game:
     # ---------------------- Update Loop ---------------------- #
     def update_title(self, dt: float) -> None:
         self.starfield.update(dt, V2(0, 35))
+
+    def update_settings(self, dt: float, events: List[pygame.event.Event]) -> None:
+        self.starfield.update(dt, V2(0, 25))
+        for e in events:
+            if e.type != pygame.KEYDOWN:
+                continue
+            if e.key == pygame.K_UP:
+                self.settings_index = (self.settings_index - 1) % 3
+            elif e.key == pygame.K_DOWN:
+                self.settings_index = (self.settings_index + 1) % 3
+            elif e.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                if self.settings_index == 0:
+                    delta = 0.1 if e.key == pygame.K_RIGHT else -0.1
+                    self.music_volume = clamp(self.music_volume + delta, 0.0, 1.0)
+                    pygame.mixer.music.set_volume(self.music_volume)
+                    self._save()
+                elif self.settings_index == 1:
+                    delta = 0.1 if e.key == pygame.K_RIGHT else -0.1
+                    self.sfx_volume = clamp(self.sfx_volume + delta, 0.0, 1.0)
+                    self._save()
+                elif self.settings_index == 2:
+                    if e.key == pygame.K_RIGHT:
+                        self.difficulty_idx = (self.difficulty_idx + 1) % len(DIFFICULTIES)
+                    else:
+                        self.difficulty_idx = (self.difficulty_idx - 1) % len(DIFFICULTIES)
+                    self._save()
 
     def _nearest_enemy_dir(self) -> Optional[V2]:
         if not self.enemies:
@@ -646,7 +702,11 @@ class Game:
         if not self._has_boss():
             if self.spawn_timer <= 0 and len(self.enemies) < self.max_enemies:
                 self.enemies.append(self._spawn_enemy())
-                self.spawn_timer = ENEMY_SPAWN_COOLDOWN * random.uniform(0.6, 1.2)
+                self.spawn_timer = (
+                    ENEMY_SPAWN_COOLDOWN
+                    * DIFF_SPAWN_MULT[self.difficulty_idx]
+                    * random.uniform(0.6, 1.2)
+                )
         # Boss timer
         self.boss_timer -= dt
         if self.boss_timer <= 0 and not self._has_boss():
@@ -758,10 +818,7 @@ class Game:
         self.starfield.update(dt, V2(0, 10))
         if self.score > self.high_score:
             self.high_score = self.score
-            try:
-                SAVE_PATH.write_text(json.dumps({"high_score": self.high_score}))
-            except Exception:
-                pass
+            self._save()
 
     # ---------------------- Draw Loop ------------------------ #
     def draw_title(self) -> None:
@@ -770,9 +827,30 @@ class Game:
         title = self.font_big.render(TITLE, True, NEON_PINK)
         sub = self.font.render("SPACE to start — WASD/Arrows to move", True, GREY)
         hint = self.font_small.render("Auto-shoot, collect coins, B for shop, P to pause.", True, GREY)
+        set_hint = self.font_small.render("S for Settings", True, GREY)
         self.screen.blit(title, title.get_rect(center=(WIDTH / 2, HEIGHT / 2 - 40)))
         self.screen.blit(sub, sub.get_rect(center=(WIDTH / 2, HEIGHT / 2 + 10)))
         self.screen.blit(hint, hint.get_rect(center=(WIDTH / 2, HEIGHT / 2 + 40)))
+        self.screen.blit(set_hint, set_hint.get_rect(center=(WIDTH / 2, HEIGHT / 2 + 70)))
+
+    def draw_settings(self) -> None:
+        self.screen.fill(BLACK)
+        self.starfield.draw(self.screen)
+        title = self.font_big.render("SETTINGS", True, NEON_PINK)
+        self.screen.blit(title, title.get_rect(center=(WIDTH / 2, 80)))
+        options = [
+            f"Music Volume: {int(self.music_volume * 100)}%",
+            f"SFX Volume: {int(self.sfx_volume * 100)}%",
+            f"Difficulty: {DIFFICULTIES[self.difficulty_idx]}",
+        ]
+        y = 160
+        for i, text in enumerate(options):
+            color = NEON_YELLOW if i == self.settings_index else GREY
+            surf = self.font.render(text, True, color)
+            self.screen.blit(surf, surf.get_rect(center=(WIDTH / 2, y)))
+            y += 40
+        hint = self.font_small.render("Arrows to change, ESC to exit", True, GREY)
+        self.screen.blit(hint, hint.get_rect(center=(WIDTH / 2, HEIGHT - 60)))
 
     def draw_hud(self) -> None:
         score_s = self.font.render(f"Score: {self.score}", True, WHITE)
@@ -885,23 +963,45 @@ class Game:
             dt = self.clock.tick(FPS) / 1000.0
             self.t += dt
 
-            for event in pygame.event.get():
+            events = pygame.event.get()
+            for event in events:
                 if event.type == pygame.QUIT:
                     self.running = False
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
-                        self.running = False
-                    if self.state == GameState.TITLE and event.key == pygame.K_SPACE:
-                        self.reset()
-                        self.state = GameState.PLAYING
+                        if self.state == GameState.SETTINGS:
+                            self.state = GameState.TITLE
+                            self._save()
+                        else:
+                            self.running = False
+                    if self.state == GameState.TITLE:
+                        if event.key == pygame.K_SPACE:
+                            self.reset()
+                            self.state = GameState.PLAYING
+                        elif event.key == pygame.K_s:
+                            self.state = GameState.SETTINGS
                     elif self.state == GameState.PLAYING:
                         if event.key == pygame.K_p:
                             self.state = GameState.TITLE
                         if event.key == pygame.K_b:
                             self.shop_open = not self.shop_open
                         if self.shop_open:
-                            if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5, pygame.K_6):
-                                idx = {pygame.K_1:0, pygame.K_2:1, pygame.K_3:2, pygame.K_4:3, pygame.K_5:4, pygame.K_6:5}[event.key]
+                            if event.key in (
+                                pygame.K_1,
+                                pygame.K_2,
+                                pygame.K_3,
+                                pygame.K_4,
+                                pygame.K_5,
+                                pygame.K_6,
+                            ):
+                                idx = {
+                                    pygame.K_1: 0,
+                                    pygame.K_2: 1,
+                                    pygame.K_3: 2,
+                                    pygame.K_4: 3,
+                                    pygame.K_5: 4,
+                                    pygame.K_6: 5,
+                                }[event.key]
                                 self._buy_if_can(idx)
                         if event.key == pygame.K_r:
                             self.reset()
@@ -914,6 +1014,8 @@ class Game:
                 self.update_title(dt)
             elif self.state == GameState.PLAYING:
                 self.update_play(dt)
+            elif self.state == GameState.SETTINGS:
+                self.update_settings(dt, events)
             else:
                 self.update_game_over(dt)
 
@@ -921,6 +1023,8 @@ class Game:
                 self.draw_title()
             elif self.state == GameState.PLAYING:
                 self.draw_play()
+            elif self.state == GameState.SETTINGS:
+                self.draw_settings()
             else:
                 self.draw_game_over()
 
