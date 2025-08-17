@@ -88,6 +88,7 @@ POWERUP_RADIUS = 12
 POWERUP_SPAWN_MIN = 10.0
 POWERUP_SPAWN_MAX = 16.0
 POWERUP_DURATION = 10.0
+SHIELD_RECHARGE_RATE = 1.0  # seconds of charge regained per second
 
 LIVES_START = 3
 BAR_WIDTH = 180
@@ -139,7 +140,8 @@ class Player:
     spread_level: int = 0       # 0 = single, 1 = +2 side bullets, 2 = +4
     pierce: int = 0             # bullets pass through N enemies
     damage: int = BULLET_BASE_DMG
-    shield_time: float = 0.0
+    shield_time: float = 0.0  # current shield charge (0-POWERUP_DURATION)
+    has_shield: bool = False
 
     def speed(self) -> float:
         return self.base_speed * self.speed_mult
@@ -156,8 +158,8 @@ class Player:
         self.pos.y = clamp(self.pos.y, self.radius, HEIGHT - self.radius)
         if self.iframes > 0:
             self.iframes = max(0.0, self.iframes - dt)
-        if self.shield_time > 0:
-            self.shield_time = max(0.0, self.shield_time - dt)
+        if self.has_shield and self.shield_time < POWERUP_DURATION:
+            self.shield_time = min(POWERUP_DURATION, self.shield_time + SHIELD_RECHARGE_RATE * dt)
         self.fire_timer = max(0.0, self.fire_timer - dt)
 
     def draw(self, surf: Surface, t: float, img: Surface) -> None:
@@ -165,7 +167,7 @@ class Player:
         surf.blit(img, rect)
         color = NEON_CYAN if int(t * 30) % 2 == 0 or self.iframes <= 0 else NEON_YELLOW
         pygame.draw.circle(surf, color, self.pos, self.radius, width=2)
-        if self.shield_time > 0:
+        if self.shield_time >= POWERUP_DURATION:
             r = self.radius + 6 + 2 * math.sin(t * 8)
             pygame.draw.circle(surf, BLUE, self.pos, int(r), width=2)
 
@@ -352,7 +354,7 @@ class Game:
             {"name": "Move Speed +10%", "cost": 30, "key": pygame.K_3, "fn": self._buy_movespeed},
             {"name": "Spread +1 (max 2)", "cost": 40, "key": pygame.K_4, "fn": self._buy_spread},
             {"name": "Pierce +1 (max 3)", "cost": 45, "key": pygame.K_5, "fn": self._buy_pierce},
-            {"name": "Shield +5s", "cost": 25, "key": pygame.K_6, "fn": self._buy_shield},
+            {"name": "Shield (recharge)", "cost": 25, "key": pygame.K_6, "fn": self._buy_shield},
         ]
 
         # Boss logic
@@ -504,8 +506,8 @@ class Game:
                 continue
             if b.from_enemy:
                 if self.player.iframes <= 0 and circle_collision(b.pos, b.radius, self.player.pos, self.player.radius):
-                    if self.player.shield_time > 0:
-                        self.player.shield_time = max(0.0, self.player.shield_time - 2.0)
+                    if self.player.shield_time >= POWERUP_DURATION:
+                        self.player.shield_time = 0.0
                         self.player.iframes = 0.2
                         self.shake = 8.0
                     else:
@@ -586,8 +588,8 @@ class Game:
         if self.player.iframes <= 0:
             for e in self.enemies:
                 if circle_collision(self.player.pos, self.player.radius, e.pos, e.radius):
-                    if self.player.shield_time > 0:
-                        self.player.shield_time = max(0.0, self.player.shield_time - 2.0)
+                    if self.player.shield_time >= POWERUP_DURATION:
+                        self.player.shield_time = 0.0
                         self.player.iframes = 0.2
                         self.shake = 8.0
                     else:
@@ -626,7 +628,8 @@ class Game:
         elif kind == PUType.SPREAD:
             self.spread_time = POWERUP_DURATION
         elif kind == PUType.SHIELD:
-            self.player.shield_time += POWERUP_DURATION * 0.8
+            self.player.has_shield = True
+            self.player.shield_time = POWERUP_DURATION
         elif kind == PUType.SPEED:
             self.speed_time = POWERUP_DURATION
         elif kind == PUType.PIERCE:
@@ -662,7 +665,8 @@ class Game:
             self.player.pierce += 1
 
     def _buy_shield(self) -> None:
-        self.player.shield_time += 5.0
+        self.player.has_shield = True
+        self.player.shield_time = POWERUP_DURATION
 
     def update_game_over(self, dt: float) -> None:
         self.starfield.update(dt, V2(0, 10))
@@ -694,18 +698,23 @@ class Game:
         self.screen.blit(coins_s, (14, 66))
         self.screen.blit(kills_s, (14, 94))
 
-        # Health bar
+        # Health bar (top-right)
         hp_label = self.font_small.render("HP", True, WHITE)
-        self.screen.blit(hp_label, (14, 112))
-        bar_x, bar_y = 14, 126
+        hp_label_x = WIDTH - hp_label.get_width() - 14
+        hp_label_y = 10
+        self.screen.blit(hp_label, (hp_label_x, hp_label_y))
+        bar_x = WIDTH - BAR_WIDTH - 14
+        bar_y = hp_label_y + hp_label.get_height() + 4
         ratio = self.lives / LIVES_START
         pygame.draw.rect(self.screen, NEON_GREEN, (bar_x, bar_y, int(BAR_WIDTH * ratio), BAR_HEIGHT))
         pygame.draw.rect(self.screen, WHITE, (bar_x, bar_y, BAR_WIDTH, BAR_HEIGHT), 2)
 
-        # Shield bar
+        # Shield bar below health
         shield_label = self.font_small.render("Shield", True, WHITE)
-        sy = bar_y + BAR_HEIGHT + 8
-        self.screen.blit(shield_label, (14, sy - 14))
+        shield_label_x = WIDTH - shield_label.get_width() - 14
+        shield_label_y = bar_y + BAR_HEIGHT + 8
+        self.screen.blit(shield_label, (shield_label_x, shield_label_y))
+        sy = shield_label_y + shield_label.get_height() + 4
         shield_ratio = clamp(self.player.shield_time / POWERUP_DURATION, 0.0, 1.0)
         pygame.draw.rect(self.screen, BLUE, (bar_x, sy, int(BAR_WIDTH * shield_ratio), BAR_HEIGHT))
         pygame.draw.rect(self.screen, WHITE, (bar_x, sy, BAR_WIDTH, BAR_HEIGHT), 2)
@@ -716,7 +725,6 @@ class Game:
         if self.spread_time > 0: badges.append(("Spread", self.spread_time))
         if self.pierce_time > 0: badges.append(("Pierce", self.pierce_time))
         if self.speed_time > 0: badges.append(("Speed", self.speed_time))
-        if self.player.shield_time > 0: badges.append(("Shield", self.player.shield_time))
         x0, y0 = 12, HEIGHT - 28
         for i, (name, tleft) in enumerate(badges[:6]):
             label = self.font_small.render(f"{name}:{int(tleft)}s", True, WHITE)
