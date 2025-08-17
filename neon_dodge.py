@@ -70,7 +70,7 @@ PLAYER_FRICTION = 10.0
 ENEMY_BASE_SPEED = 120.0
 ENEMY_RADIUS = 16
 ENEMY_SPAWN_COOLDOWN = 1.0
-ENEMY_MAX = 12
+ENEMY_MAX = 20
 
 ORB_RADIUS = 8
 ORB_SCORE = 10
@@ -82,6 +82,7 @@ BULLET_SPEED = 520.0
 BULLET_LIFETIME = 2.0
 BULLET_BASE_DMG = 1
 FIRE_COOLDOWN = 0.35
+ENEMY_BULLET_SPEED = 300.0
 
 POWERUP_RADIUS = 12
 POWERUP_SPAWN_MIN = 10.0
@@ -95,6 +96,15 @@ COINS_NORMAL_MIN, COINS_NORMAL_MAX = 1, 3
 COINS_BOSS_MIN, COINS_BOSS_MAX = 15, 25
 
 random.seed()
+
+# sprite helper
+def load_sprite(path: str, diameter: int, color: Tuple[int, int, int]) -> Surface:
+    try:
+        return pygame.image.load(path).convert_alpha()
+    except Exception:
+        surf = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
+        pygame.draw.circle(surf, color, (diameter // 2, diameter // 2), diameter // 2)
+        return surf
 
 # ---------------------------- Utility Helpers ------------------------------ #
 
@@ -143,10 +153,11 @@ class Player:
             self.shield_time = max(0.0, self.shield_time - dt)
         self.fire_timer = max(0.0, self.fire_timer - dt)
 
-    def draw(self, surf: Surface, t: float) -> None:
+    def draw(self, surf: Surface, t: float, img: Surface) -> None:
+        rect = img.get_rect(center=self.pos)
+        surf.blit(img, rect)
         color = NEON_CYAN if int(t * 30) % 2 == 0 or self.iframes <= 0 else NEON_YELLOW
         pygame.draw.circle(surf, color, self.pos, self.radius, width=2)
-        pygame.draw.circle(surf, color, self.pos, self.radius - 6)
         if self.shield_time > 0:
             r = self.radius + 6 + 2 * math.sin(t * 8)
             pygame.draw.circle(surf, BLUE, self.pos, int(r), width=2)
@@ -160,6 +171,10 @@ class Enemy:
     radius: int = ENEMY_RADIUS
     hp: int = 1
     is_boss: bool = False
+    tier: int = 0
+    dash_cd: float = 0.0
+    shoot_cd: float = 0.0
+    boss_kind: int = 0
 
     def update(self, dt: float, player_pos: V2) -> None:
         to_player = (player_pos - self.pos)
@@ -174,14 +189,19 @@ class Enemy:
             self.vel.y *= -1
         self.pos.x = clamp(self.pos.x, self.radius, WIDTH - self.radius)
         self.pos.y = clamp(self.pos.y, self.radius, HEIGHT - self.radius)
+        if self.tier >= 1:
+            self.dash_cd -= dt
+            if self.dash_cd <= 0:
+                if to_player.length_squared() > 0:
+                    self.vel += to_player.normalize() * self.speed * (1.5 + 0.5 * self.tier)
+                self.dash_cd = random.uniform(1.5, 3.0)
 
-    def draw(self, surf: Surface) -> None:
-        color = ORANGE if self.is_boss else NEON_PINK
-        pygame.draw.circle(surf, color, self.pos, self.radius)
+    def draw(self, surf: Surface, enemy_img: Surface, boss_img: Surface) -> None:
+        img = boss_img if self.is_boss else enemy_img
+        rect = img.get_rect(center=self.pos)
+        surf.blit(img, rect)
         if self.is_boss:
             pygame.draw.circle(surf, WHITE, self.pos, self.radius + 6, width=2)
-        eye = self.pos + (self.vel.normalize() * 6 if self.vel.length_squared() > 0 else V2())
-        pygame.draw.circle(surf, BLACK, eye, 3)
 
 
 @dataclass
@@ -201,6 +221,7 @@ class Bullet:
     lifetime: float = BULLET_LIFETIME
     pierce: int = 0
     dmg: int = BULLET_BASE_DMG
+    from_enemy: bool = False
     def update(self, dt: float) -> None:
         self.pos += self.vel * dt
         self.lifetime -= dt
@@ -209,7 +230,8 @@ class Bullet:
             return False
         return -20 <= self.pos.x <= WIDTH + 20 and -20 <= self.pos.y <= HEIGHT + 20
     def draw(self, surf: Surface) -> None:
-        pygame.draw.circle(surf, NEON_GREEN, self.pos, self.radius)
+        color = RED if self.from_enemy else NEON_GREEN
+        pygame.draw.circle(surf, color, self.pos, self.radius)
 
 
 class PUType(Enum):
@@ -281,6 +303,11 @@ class Game:
 
         self.starfield = Starfield()
 
+        # Sprites
+        self.player_img = load_sprite("player.png", PLAYER_RADIUS * 2, NEON_CYAN)
+        self.enemy_img = load_sprite("es1.png", ENEMY_RADIUS * 2, NEON_PINK)
+        self.boss_img = load_sprite("bs1.png", 68, ORANGE)
+
         self.high_score = 0
         self._load_save()
 
@@ -294,6 +321,7 @@ class Game:
         self.diff_timer = 0.0
         self.enemy_speed = ENEMY_BASE_SPEED
         self.max_enemies = 3
+        self.enemy_level = 0
         self.shake = 0.0
 
         # Combat
@@ -321,7 +349,7 @@ class Game:
         ]
 
         # Boss logic
-        self.boss_timer = 28.0  # seconds to next boss
+        self.boss_timer = 20.0  # seconds to next boss
 
     # ---------------------- Persistence ---------------------- #
     def _load_save(self) -> None:
@@ -356,14 +384,24 @@ class Game:
             pos = V2(random.uniform(ENEMY_RADIUS, WIDTH - ENEMY_RADIUS), HEIGHT + ENEMY_RADIUS)
             vel = V2(0, -1)
         speed = self.enemy_speed * random.uniform(0.9, 1.2)
-        return Enemy(pos=pos, vel=vel * speed, speed=speed, hp=1)
+        tier = random.randint(0, self.enemy_level)
+        speed *= 1.0 + 0.15 * tier
+        hp = 1 + tier
+        dash = random.uniform(1.5, 3.0) if tier >= 1 else 0.0
+        shoot = random.uniform(2.0, 3.5) if tier >= 2 else 0.0
+        return Enemy(pos=pos, vel=vel * speed, speed=speed, hp=hp, tier=tier, dash_cd=dash, shoot_cd=shoot)
 
     def _spawn_boss(self) -> Enemy:
         pos = V2(random.uniform(120, WIDTH - 120), -40)
         speed = max(90.0, self.enemy_speed * 0.9)
         # scale HP with time played
         hp = 24 + int(self.t // 20) * 6
-        return Enemy(pos=pos, vel=V2(0, speed), speed=speed, radius=34, hp=hp, is_boss=True)
+        boss_kind = random.choice([0, 1])
+        tier = 2 if boss_kind == 1 else 1
+        dash = random.uniform(1.5, 3.0)
+        shoot = random.uniform(1.0, 2.0) if boss_kind == 1 else 0.0
+        return Enemy(pos=pos, vel=V2(0, speed), speed=speed, radius=34, hp=hp, is_boss=True,
+                     tier=tier, dash_cd=dash, shoot_cd=shoot, boss_kind=boss_kind)
 
     def _spawn_orb(self) -> Orb:
         return Orb(V2(random.uniform(40, WIDTH - 40), random.uniform(40, HEIGHT - 40)))
@@ -384,6 +422,7 @@ class Game:
         self.diff_timer = 0.0
         self.enemy_speed = ENEMY_BASE_SPEED
         self.max_enemies = 3
+        self.enemy_level = 0
         self.shake = 0.0
         self.bullets.clear()
         self.powerups.clear()
@@ -392,7 +431,7 @@ class Game:
         self.coins = 0
         self.kills = 0
         self.shop_open = False
-        self.boss_timer = 28.0
+        self.boss_timer = 20.0
 
     # ---------------------- Update Loop ---------------------- #
     def update_title(self, dt: float) -> None:
@@ -444,6 +483,8 @@ class Game:
         self.player.update(dt, keys)
         self.starfield.update(dt, self.player.vel)
 
+        self.enemy_level = min(2, int(self.t // 30))
+
         # Auto-fire
         self._try_fire()
 
@@ -453,6 +494,21 @@ class Game:
         new_bullets: List[Bullet] = []
         for b in self.bullets:
             if not b.alive():
+                continue
+            if b.from_enemy:
+                if self.player.iframes <= 0 and circle_collision(b.pos, b.radius, self.player.pos, self.player.radius):
+                    if self.player.shield_time > 0:
+                        self.player.shield_time = max(0.0, self.player.shield_time - 2.0)
+                        self.player.iframes = 0.2
+                        self.shake = 8.0
+                    else:
+                        self.lives -= 1
+                        self.player.iframes = PLAYER_IFRAMES
+                        self.shake = 12.0
+                        if self.lives <= 0:
+                            self.state = GameState.GAME_OVER
+                else:
+                    new_bullets.append(b)
                 continue
             hit_any = False
             for e in list(self.enemies):
@@ -465,7 +521,7 @@ class Game:
                         if e.is_boss:
                             self.score += BOSS_KILL_SCORE
                             self.coins += random.randint(COINS_BOSS_MIN, COINS_BOSS_MAX)
-                            self.boss_timer = max(18.0, 32.0 - (self.t * 0.03))
+                            self.boss_timer = max(12.0, 28.0 - (self.t * 0.05))
                         else:
                             self.score += KILL_SCORE
                             self.coins += random.randint(COINS_NORMAL_MIN, COINS_NORMAL_MAX)
@@ -482,6 +538,14 @@ class Game:
         # Enemies
         for e in self.enemies:
             e.update(dt, self.player.pos)
+            if (e.tier >= 2) or (e.is_boss and e.boss_kind == 1):
+                e.shoot_cd -= dt
+                if e.shoot_cd <= 0:
+                    to = self.player.pos - e.pos
+                    dir = to.normalize() if to.length_squared() > 0 else V2(0, 1)
+                    dmg = 2 if e.is_boss else 1
+                    self.bullets.append(Bullet(e.pos + dir * (e.radius + 4), dir * ENEMY_BULLET_SPEED, dmg=dmg, from_enemy=True))
+                    e.shoot_cd = random.uniform(1.0, 2.0) if e.is_boss else random.uniform(1.5, 3.0)
 
         # Spawn logic
         self.spawn_timer -= dt
@@ -639,6 +703,9 @@ class Game:
             label = self.font_small.render(f"{name}:{int(tleft)}s", True, WHITE)
             self.screen.blit(label, (x0 + i * 130, y0))
 
+        prompt = self.font_small.render("Press B for Shop", True, GREY)
+        self.screen.blit(prompt, (WIDTH - prompt.get_width() - 14, HEIGHT - 28))
+
     def draw_shop(self) -> None:
         panel = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         panel.fill((0, 0, 0, 200))
@@ -668,10 +735,10 @@ class Game:
         for pu in self.powerups:
             pu.draw(temp)
         for e in self.enemies:
-            e.draw(temp)
+            e.draw(temp, self.enemy_img, self.boss_img)
         for b in self.bullets:
             b.draw(temp)
-        self.player.draw(temp, self.t)
+        self.player.draw(temp, self.t, self.player_img)
         self.screen.blit(temp, (ox, oy))
         self.draw_hud()
         if self.shop_open:
