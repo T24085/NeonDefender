@@ -375,6 +375,8 @@ class Game:
         self.bullet_img = load_sprite("bullet.png", BULLET_RADIUS * 2, NEON_GREEN)
 
         self.high_score = 0
+        self.leaderboard: List[dict] = []
+        self.score_saved = False
         self._load_save()
 
         # Gameplay
@@ -423,17 +425,36 @@ class Game:
         if SAVE_PATH.exists():
             try:
                 data = json.loads(SAVE_PATH.read_text())
-                self.high_score = int(data.get("high_score", 0))
+                scores = data.get("scores")
+                if isinstance(scores, list):
+                    for entry in scores:
+                        self.leaderboard.append({
+                            "score": int(entry.get("score", 0)),
+                            "kills": int(entry.get("kills", 0)),
+                            "coins": int(entry.get("coins", 0)),
+                        })
+                else:
+                    hi = int(data.get("high_score", 0))
+                    if hi > 0:
+                        self.leaderboard.append({"score": hi, "kills": 0, "coins": 0})
             except Exception:
-                self.high_score = 0
-        else:
-            self.high_score = 0
+                self.leaderboard.clear()
+        self.leaderboard.sort(key=lambda e: e["score"], reverse=True)
+        self.leaderboard = self.leaderboard[:5]
+        self.high_score = self.leaderboard[0]["score"] if self.leaderboard else 0
 
     def _save(self) -> None:
         try:
-            SAVE_PATH.write_text(json.dumps({"high_score": self.high_score}))
+            self.leaderboard.sort(key=lambda e: e["score"], reverse=True)
+            self.leaderboard = self.leaderboard[:5]
+            SAVE_PATH.write_text(json.dumps({"scores": self.leaderboard}))
         except Exception:
             pass
+
+    def _clear_scores(self) -> None:
+        self.leaderboard.clear()
+        self.high_score = 0
+        self._save()
 
     # ---------------------- Spawning ------------------------- #
     def _spawn_enemy(self) -> Enemy:
@@ -519,6 +540,7 @@ class Game:
         self.kills = 0
         self.shop_open = False
         self.boss_timer = 20.0
+        self.score_saved = False
 
     # ---------------------- Update Loop ---------------------- #
     def update_title(self, dt: float) -> None:
@@ -756,12 +778,15 @@ class Game:
 
     def update_game_over(self, dt: float) -> None:
         self.starfield.update(dt, V2(0, 10))
-        if self.score > self.high_score:
-            self.high_score = self.score
-            try:
-                SAVE_PATH.write_text(json.dumps({"high_score": self.high_score}))
-            except Exception:
-                pass
+        if not self.score_saved:
+            self.leaderboard.append({
+                "score": self.score,
+                "kills": self.kills,
+                "coins": self.coins,
+            })
+            self._save()
+            self.high_score = self.leaderboard[0]["score"] if self.leaderboard else 0
+            self.score_saved = True
 
     # ---------------------- Draw Loop ------------------------ #
     def draw_title(self) -> None:
@@ -773,6 +798,16 @@ class Game:
         self.screen.blit(title, title.get_rect(center=(WIDTH / 2, HEIGHT / 2 - 40)))
         self.screen.blit(sub, sub.get_rect(center=(WIDTH / 2, HEIGHT / 2 + 10)))
         self.screen.blit(hint, hint.get_rect(center=(WIDTH / 2, HEIGHT / 2 + 40)))
+        y = HEIGHT / 2 + 80
+        for idx, entry in enumerate(self.leaderboard, 1):
+            text = f"{idx}. {entry['score']}"
+            if entry.get('kills') or entry.get('coins'):
+                text += f"  K:{entry.get('kills', 0)} C:{entry.get('coins', 0)}"
+            line = self.font_small.render(text, True, NEON_CYAN)
+            self.screen.blit(line, line.get_rect(center=(WIDTH / 2, y)))
+            y += 22
+        clear = self.font_small.render("Press C to clear scores", True, GREY)
+        self.screen.blit(clear, clear.get_rect(center=(WIDTH / 2, y + 10)))
 
     def draw_hud(self) -> None:
         score_s = self.font.render(f"Score: {self.score}", True, WHITE)
@@ -894,6 +929,8 @@ class Game:
                     if self.state == GameState.TITLE and event.key == pygame.K_SPACE:
                         self.reset()
                         self.state = GameState.PLAYING
+                    elif self.state == GameState.TITLE and event.key == pygame.K_c:
+                        self._clear_scores()
                     elif self.state == GameState.PLAYING:
                         if event.key == pygame.K_p:
                             self.state = GameState.TITLE
