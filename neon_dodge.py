@@ -63,14 +63,15 @@ ORANGE = (255, 150, 80)
 
 # Gameplay
 PLAYER_BASE_SPEED = 320.0
-PLAYER_RADIUS = 14
+# make player easier to see
+PLAYER_RADIUS = 20
 PLAYER_IFRAMES = 1.0
 PLAYER_FRICTION = 10.0
 
 ENEMY_BASE_SPEED = 120.0
 ENEMY_RADIUS = 16
-ENEMY_SPAWN_COOLDOWN = 1.0
-ENEMY_MAX = 20
+ENEMY_SPAWN_COOLDOWN = 0.4
+ENEMY_MAX = 50
 
 ORB_RADIUS = 8
 ORB_SCORE = 10
@@ -97,6 +98,11 @@ BAR_HEIGHT = 16
 # Coins
 COINS_NORMAL_MIN, COINS_NORMAL_MAX = 1, 3
 COINS_BOSS_MIN, COINS_BOSS_MAX = 15, 25
+
+# Experience
+XP_KILL = 20
+XP_BOSS_KILL = 100
+XP_ORB = 5
 
 random.seed()
 
@@ -142,6 +148,8 @@ class Player:
     damage: int = BULLET_BASE_DMG
     shield_time: float = 0.0  # current shield charge (0-POWERUP_DURATION)
     has_shield: bool = False
+    level: int = 1
+    xp: int = 0
 
     def speed(self) -> float:
         return self.base_speed * self.speed_mult
@@ -161,6 +169,15 @@ class Player:
         if self.has_shield and self.shield_time < POWERUP_DURATION:
             self.shield_time = min(POWERUP_DURATION, self.shield_time + SHIELD_RECHARGE_RATE * dt)
         self.fire_timer = max(0.0, self.fire_timer - dt)
+
+    def xp_to_next(self) -> int:
+        return 100 * self.level
+
+    def gain_xp(self, amount: int) -> None:
+        self.xp += amount
+        while self.xp >= self.xp_to_next():
+            self.xp -= self.xp_to_next()
+            self.level += 1
 
     def draw(self, surf: Surface, t: float, img: Surface) -> None:
         rect = img.get_rect(center=self.pos)
@@ -338,7 +355,9 @@ class Game:
     def __init__(self):
         pygame.init()
         pygame.display.set_caption(TITLE)
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        global WIDTH, HEIGHT
+        WIDTH, HEIGHT = self.screen.get_size()
         self.clock = pygame.time.Clock()
         self.font_big = pygame.font.SysFont("consolas", 48)
         self.font = pygame.font.SysFont("consolas", 24)
@@ -590,10 +609,12 @@ class Game:
                         if e.is_boss:
                             self.score += BOSS_KILL_SCORE
                             self.coins += random.randint(COINS_BOSS_MIN, COINS_BOSS_MAX)
+                            self.player.gain_xp(XP_BOSS_KILL)
                             self.boss_timer = max(12.0, 28.0 - (self.t * 0.05))
                         else:
                             self.score += KILL_SCORE
                             self.coins += random.randint(COINS_NORMAL_MIN, COINS_NORMAL_MAX)
+                            self.player.gain_xp(XP_KILL)
                         self.shake = min(10.0, self.shake + (4.0 if e.is_boss else 2.5))
                     if b.pierce > 0:
                         b.pierce -= 1
@@ -642,6 +663,7 @@ class Game:
         # Collisions: orb
         if circle_collision(self.player.pos, self.player.radius, self.orb.pos, self.orb.radius):
             self.score += ORB_SCORE
+            self.player.gain_xp(XP_ORB)
             self.orb = self._spawn_orb()
             self.shake = min(8.0, self.shake + 4.0)
 
@@ -757,10 +779,16 @@ class Game:
         hi_s = self.font.render(f"High: {self.high_score}", True, GREY)
         coins_s = self.font.render(f"Coins: {self.coins}", True, NEON_YELLOW)
         kills_s = self.font.render(f"Kills: {self.kills}", True, NEON_GREEN)
+        level_s = self.font.render(f"Level: {self.player.level}", True, NEON_CYAN)
+        xp_s = self.font_small.render(
+            f"XP: {self.player.xp}/{self.player.xp_to_next()}", True, NEON_CYAN
+        )
         self.screen.blit(score_s, (14, 10))
         self.screen.blit(hi_s, (14, 38))
         self.screen.blit(coins_s, (14, 66))
         self.screen.blit(kills_s, (14, 94))
+        self.screen.blit(level_s, (14, 122))
+        self.screen.blit(xp_s, (14, 150))
 
         # Health bar (top-right)
         hp_label = self.font_small.render("HP", True, WHITE)
