@@ -359,6 +359,9 @@ class GameState:
 class Game:
     def __init__(self):
         pygame.init()
+        # Initialize mixer for sound effects and music
+        import pygame.mixer
+        pygame.mixer.init()
         pygame.display.set_caption(TITLE)
         self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         global WIDTH, HEIGHT
@@ -371,6 +374,29 @@ class Game:
         self.state = GameState.TITLE
         self.t = 0.0
 
+        # Audio assets
+        try:
+            self.snd_shoot = pygame.mixer.Sound("laser.wav")
+        except Exception:
+            self.snd_shoot = None
+        try:
+            self.snd_explode = pygame.mixer.Sound("explosion.wav")
+        except Exception:
+            self.snd_explode = None
+        try:
+            pygame.mixer.music.load("music.ogg")
+            pygame.mixer.music.play(-1)
+        except Exception:
+            pass
+        # Default volume controls
+        self.music_volume = 0.5
+        pygame.mixer.music.set_volume(self.music_volume)
+        self.sfx_volume = 0.5
+        if self.snd_shoot:
+            self.snd_shoot.set_volume(self.sfx_volume)
+        if self.snd_explode:
+            self.snd_explode.set_volume(self.sfx_volume)
+
         self.starfield = Starfield()
 
         # Sprites
@@ -378,6 +404,7 @@ class Game:
         self.enemy_img = load_sprite("es1.png", ENEMY_RADIUS * 2, NEON_PINK)
         self.boss_img = load_sprite("bs1.png", 68, ORANGE)
         self.bullet_img = load_sprite("bullet.png", BULLET_RADIUS * 2, NEON_GREEN)
+
 
         # Settings
         self.music_volume = 1.0
@@ -388,6 +415,7 @@ class Game:
         self.high_score = 0
         self._load_save()
         pygame.mixer.music.set_volume(self.music_volume)
+
 
         # Gameplay
         self.player = Player(V2(WIDTH / 2, HEIGHT / 2))
@@ -431,6 +459,7 @@ class Game:
         self.boss_timer = 20.0  # seconds to next boss
 
     # ---------------------- Persistence ---------------------- #
+
     def _load_save(self) -> None:
         if SAVE_PATH.exists():
             try:
@@ -464,6 +493,7 @@ class Game:
             )
         except Exception:
             pass
+
 
     # ---------------------- Spawning ------------------------- #
     def _spawn_enemy(self) -> Enemy:
@@ -607,6 +637,8 @@ class Game:
         for d in dirs:
             vel = d * BULLET_SPEED
             self.bullets.append(Bullet(self.player.pos + d * (self.player.radius + 6), vel, pierce=(1 if self.pierce_time > 0 else self.player.pierce), dmg=self.player.damage))
+            if self.snd_shoot:
+                self.snd_shoot.play()
         self.shake = min(6.0, self.shake + 1.5)
 
     def _has_boss(self) -> bool:
@@ -661,6 +693,8 @@ class Game:
                     if e.hp <= 0:
                         self.enemies.remove(e)
                         self.kills += 1
+                        if self.snd_explode:
+                            self.snd_explode.play()
                         self._spawn_explosion(e.pos)
                         if e.is_boss:
                             self.score += BOSS_KILL_SCORE
