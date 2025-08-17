@@ -377,7 +377,6 @@ class Game:
     def __init__(self):
         pygame.init()
         # Initialize mixer for sound effects and music
-        import pygame.mixer
         pygame.mixer.init()
         pygame.display.set_caption(TITLE)
         self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
