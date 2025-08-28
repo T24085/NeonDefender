@@ -1,0 +1,135 @@
+/// Prisma schema for PuzzleRush Arena
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String?
+  email     String?  @unique
+  image     String?
+  rating    Int      @default(1000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  accounts  Account[]
+  sessions  Session[]
+  matches   MatchParticipant[]
+}
+
+model Account {
+  id                String @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  User              User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  User         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Match {
+  id           String       @id @default(cuid())
+  mode         MatchMode
+  roomCode     String       @unique
+  difficulty   Difficulty
+  seed         String
+  status       MatchStatus  @default(LOBBY)
+  createdAt    DateTime     @default(now())
+  startedAt    DateTime?
+  endedAt      DateTime?
+  solutionHash String
+  participants MatchParticipant[]
+  chat         ChatMessage[]
+  actions      CellAction[]
+  leaderboard  LeaderboardEntry[]
+}
+
+model MatchParticipant {
+  id       String   @id @default(cuid())
+  matchId  String
+  userId   String
+  team     Int?
+  score    Int      @default(0)
+  result   Result?
+  joinedAt DateTime @default(now())
+  leftAt   DateTime?
+  User     User     @relation(fields: [userId], references: [id])
+  Match    Match    @relation(fields: [matchId], references: [id])
+  @@unique([matchId, userId])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  matchId   String
+  userId    String?
+  system    Boolean  @default(false)
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model CellAction {
+  id        String   @id @default(cuid())
+  matchId   String
+  userId    String
+  r         Int
+  c         Int
+  value     Int?
+  correct   Boolean
+  createdAt DateTime @default(now())
+}
+
+model LeaderboardEntry {
+  id        String   @id @default(cuid())
+  matchId   String
+  userId    String
+  score     Int
+  createdAt DateTime @default(now())
+}
+
+enum MatchMode {
+  SOLO
+  PVP
+  ARENA
+  COOP
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+  EXPERT
+}
+
+enum MatchStatus {
+  LOBBY
+  ACTIVE
+  COMPLETE
+  CANCELLED
+}
+
+enum Result {
+  WIN
+  LOSS
+  DRAW
+  COOP
+}
